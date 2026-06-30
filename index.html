@@ -299,6 +299,9 @@ textarea.inp{resize:vertical;min-height:88px;line-height:1.6}
 .client-tab[draggable="true"]:active{cursor:grabbing}
 .client-tab:hover{color:#1a3a6b}
 .client-tab.active{color:#1a3a6b;border-bottom-color:#1a3a6b;background:#f0f4ff;border-radius:5px 5px 0 0}
+.client-tab-wrap{display:inline-flex;align-items:center;position:relative}
+.client-tab-edit{background:none;border:none;cursor:pointer;color:#aaa;font-size:11px;padding:0 4px 0 2px;margin-bottom:-2px;line-height:1}
+.client-tab-edit:hover{color:#1a3a6b}
 .client-tab-add{padding:7px 11px;font-size:11px;border:1px dashed #ccc;border-radius:5px 5px 0 0;background:transparent;color:#888;cursor:pointer;font-family:inherit;margin-left:4px}
 .client-tab-add:hover{border-color:#1a3a6b;color:#1a3a6b}
 .client-panel{display:none}.client-panel.active{display:block}
@@ -565,16 +568,18 @@ function drawClientTabs(){
   var area = document.getElementById('sched-area');
   var tabs = '<div class="client-tabs" id="client-tabs-bar">';
   clients.forEach(function(c,ci){
-    tabs += '<button class="client-tab" id="ctab-'+ci+'"'
+    tabs += '<span class="client-tab-wrap" id="ctabwrap-'+ci+'"'
            +' draggable="true"'
-           +' onclick="activateClient('+ci+')"'
            +' ondragstart="onTabDragStart(event,'+ci+')"'
            +' ondragover="onTabDragOver(event,'+ci+')"'
            +' ondragleave="onTabDragLeave(event)"'
            +' ondrop="onTabDrop(event,'+ci+')"'
            +' ondragend="onTabDragEnd(event)"'
            +' title="拖拽可调整顺序">'
-           + escH(c.name||('客户'+(ci+1))) + '</button>';
+           +'<button class="client-tab" id="ctab-'+ci+'" onclick="activateClient('+ci+')">'
+           + escH(c.name||('客户'+(ci+1))) + '</button>'
+           +'<button class="client-tab-edit" onclick="event.stopPropagation();openClientEdit('+ci+')" title="编辑客户名称">✎</button>'
+           +'</span>';
   });
   tabs += '<button class="client-tab-add" onclick="addClient()">＋ 添加客户</button></div>';
   var panels = '<div id="client-panels">';
@@ -583,6 +588,27 @@ function drawClientTabs(){
   });
   panels += '</div>';
   area.innerHTML = tabs + panels;
+}
+
+// ===== 客户名称编辑（点 ✎，左侧实时同步） =====
+function openClientEdit(ci){
+  var newName = prompt('修改客户名称：', clients[ci].name||('客户'+(ci+1)));
+  if(newName===null) return; // 取消
+  newName = newName.trim();
+  if(!newName){ alert('名称不能为空'); return; }
+  clients[ci].name = newName;
+  // 同步标签文字
+  var t = document.getElementById('ctab-'+ci);
+  if(t) t.textContent = newName;
+  // 同步客户面板内的名称输入框（若该客户当前是激活面板）
+  var nameInput = document.querySelector('#cpanel-'+ci+' .client-info-row input');
+  if(nameInput) nameInput.value = newName;
+  // 同步左侧侧边栏标题（若当前激活客户就是这个）
+  if(_activeClient===ci){
+    drawSidebar(ci);
+    drawExtraArea(ci);
+  }
+  dirty();
 }
 
 // ── Drag-and-drop reorder ──────────────────────────────────────────
@@ -1911,20 +1937,41 @@ buildDocXml = function() {
   var PTOTAL=W_PN+W_PP; // 10467
   function personNamePara(nm, tl) {
     // widowControl, spacing 400, kern=0, sz=24
+    var charLen = nameCharLen(nm);
+    var nmText = normName(nm);
+    // 4字及以上姓名：用负字符间距压缩到约3字宽度
+    var nameSpacing = '';
+    if(charLen>=4){
+      // 3字标准宽度=660twips(24half-pt*220/8≈), 简化：每多1字压缩约-40~-50 twips
+      // 经验值：4字名压缩量约-30, 5字约-50
+      var compress = -(Math.round((charLen-3)*40));
+      nameSpacing = '<w:spacing w:val="'+compress+'"/>';
+    }
     return '<w:p><w:pPr><w:spacing w:line="400" w:lineRule="exact"/>'+
       '<w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'"/>'+
       '<w:kern w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr>'+
       '<w:r><w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'" w:hint="eastAsia"/>'+
+      '<w:kern w:val="0"/>'+nameSpacing+'<w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'+
+      '<w:t xml:space="preserve">'+escX(nmText)+'</w:t></w:r>'+
+      (tl?'<w:r><w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'" w:hint="eastAsia"/>'+
       '<w:kern w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'+
-      '<w:t xml:space="preserve">'+escX(normName(nm)+(tl?'  '+tl:''))+'</w:t></w:r></w:p>';
+      '<w:t xml:space="preserve">'+'  '+escX(tl)+'</w:t></w:r>':'')+
+      '</w:p>';
   }
   function normName(nm){
     // Strip internal spaces first so "王  进" → "王进" before padding
     nm=(nm||'').replace(/\s+/g,'').trim();
     var w=0;for(var i=0;i<nm.length;i++)w+=nm.charCodeAt(i)>255?2:1;
-    // w===4 means 2-char Chinese name → insert em space between chars
+    // w===4 means 2-char Chinese name → insert em space between chars, align to 3-char width
     if(w===4)nm=nm.slice(0,1)+'\u2003'+nm.slice(1);
+    // w>=8 means 4+ char Chinese name → mark for compression to 3-char width (handled by personNamePara via charSpacing)
     return nm;
+  }
+  // 计算名字视觉字符数（汉字记1，用于判断是否需要压缩）
+  function nameCharLen(nm){
+    var clean=(nm||'').replace(/\s+/g,'').trim();
+    var w=0;for(var i=0;i<clean.length;i++)w+=clean.charCodeAt(i)>255?2:1;
+    return w/2; // 汉字数
   }
   function coNamePara(name, count) {
     // widowControl, spacing 400, jc=center, b, sz=24
