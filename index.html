@@ -1046,12 +1046,8 @@ function makeDetailSecHTML(ci,side,coId,name,color,rows){
   var editing = !!_editingSecs[idKey];
   var n = (rows||[]).length;
   var tbody = (rows||[]).map(function(r,i){
-    var onNm = side==='midea'
-      ? 'midDrs['+i+'].name=this.value;dirty()'
-      : 'clients['+ci+'].drs[\''+coId+'\']['+i+'].name=this.value;dirty()';
-    var onTl = side==='midea'
-      ? 'midDrs['+i+'].title=this.value;dirty()'
-      : 'clients['+ci+'].drs[\''+coId+'\']['+i+'].title=this.value;dirty()';
+    var onNm = 'syncDrField(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',\'name\',this.value)';
+    var onTl = 'syncDrField(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',\'title\',this.value)';
     var upBtn = i>0
       ? '<button class="movebtn" onclick="moveRow(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',-1)" title="上移">▲</button>'
       : '<span class="movebtn-ph"></span>';
@@ -1086,6 +1082,20 @@ function makeDetailSecHTML(ci,side,coId,name,color,rows){
     +'</div></div>';
 }
 
+// ===== 同步 drs ↔ vco.persons / midPs（双向数据一致）=====
+function syncDrField(ci, side, coId, idx, field, val){
+  ci = parseInt(ci);
+  if(side==='midea'){
+    if(midDrs[idx]) midDrs[idx][field]=val;
+    if(midPs[idx]) midPs[idx][field]=val;
+  } else {
+    if(clients[ci].drs[coId] && clients[ci].drs[coId][idx]) clients[ci].drs[coId][idx][field]=val;
+    var co = clients[ci].vcos.find(function(c){return c.id===coId;});
+    if(co && co.persons[idx]) co.persons[idx][field]=val;
+  }
+  dirty();
+}
+
 // ===== 人员顺序上下调整 =====
 function moveRow(ci, side, coId, i, dir){
   ci = parseInt(ci);
@@ -1107,15 +1117,29 @@ function moveRow(ci, side, coId, i, dir){
   drawSidebar(ci); drawExtraArea(ci); dirty();
 }
 function drDel(ci,key,i){
-  if(key==='midea')midDrs.splice(i,1);
-  else if(clients[ci]&&clients[ci].drs[key])clients[ci].drs[key].splice(i,1);
-  drawExtraArea(parseInt(ci)); dirty();
+  ci = parseInt(ci);
+  if(key==='midea'){
+    midDrs.splice(i,1);
+    midPs.splice(i,1);
+  } else if(clients[ci]&&clients[ci].drs[key]){
+    clients[ci].drs[key].splice(i,1);
+    var co = clients[ci].vcos.find(function(c){return c.id===key;});
+    if(co) co.persons.splice(i,1);
+  }
+  drawSidebar(ci); drawExtraArea(ci); dirty();
 }
 function drAdd(ci,key){
   ci=parseInt(ci);
-  if(key==='midea')midDrs.push({name:'',title:''});
-  else{if(!clients[ci].drs[key])clients[ci].drs[key]=[];clients[ci].drs[key].push({name:'',title:''});}
-  drawExtraArea(ci); dirty();
+  if(key==='midea'){
+    midDrs.push({name:'',title:''});
+    midPs.push({name:'',title:''});
+  } else {
+    if(!clients[ci].drs[key])clients[ci].drs[key]=[];
+    clients[ci].drs[key].push({name:'',title:''});
+    var co = clients[ci].vcos.find(function(c){return c.id===key;});
+    if(co) co.persons.push({name:'',title:''});
+  }
+  drawSidebar(ci); drawExtraArea(ci); dirty();
 }
 function clearPeople(ci,key){
   ci=parseInt(ci);
