@@ -1816,19 +1816,21 @@ buildDocXml = function() {
     if(w===6) name=name.slice(0,1)+'\u3000'+name.slice(1);
     return name;
   }
-  function buildAttParas(atts) {
+  function buildAttParas(atts, clientVcos, clientDrs) {
     if (!atts||!atts.length) return '<w:p><w:pPr><w:widowControl/>'+
       '<w:spacing w:line="400" w:lineRule="exact"/></w:pPr></w:p>';
-    // 按 drs/vcos 顺序排列（与人员名单一致）
+    // 按该客户自己的 drs/vcos 顺序排列（与人员名单一致，避免跨客户混淆）
+    var useVcos = clientVcos || vcos;
+    var useDrs  = clientDrs  || drs;
     var groups={};
     atts.forEach(function(a){if(!groups[a.coId])groups[a.coId]=[];groups[a.coId].push(a.name);});
     // 排序：vcos 顺序在前，midea 在后
     var order=[];
-    vcos.forEach(function(v){if(groups[v.id])order.push(v.id);});
+    useVcos.forEach(function(v){if(groups[v.id])order.push(v.id);});
     if(groups['midea'])order.push('midea');
     // 每个公司内部按 drs 顺序排（规范化名字去空格后比对）
     order.forEach(function(coId){
-      var drList = drs[coId]||[];
+      var drList = useDrs[coId]||[];
       var nameSet = groups[coId];
       if(drList.length){
         // Normalize: strip spaces for comparison
@@ -1845,7 +1847,7 @@ buildDocXml = function() {
     });
     var out='';
     order.forEach(function(coId){
-      var rawNm = coId==='midea'?'美的集团':((vcos.find(function(v){return v.id===coId;})||{name:coId}).name);
+      var rawNm = coId==='midea'?'美的集团':((useVcos.find(function(v){return v.id===coId;})||{name:coId}).name);
       var label = padLabel(rawNm)+'：';
       var names = groups[coId];
       for(var i=0;i<names.length;i+=3){
@@ -1878,9 +1880,11 @@ buildDocXml = function() {
         var timeCell = tc(W_TIME, timePara(row.time||''), 'center');
         var contCell = tc(W_CONT, contentParas(row.content||''), 'center');
         var attVMerge = ''; // No vmerge for att - each row independent
+        // 使用该客户自身的 vcos / drs（含美的集团共享部分），避免跨客户排序混淆
+        var clientDrsForAtt = Object.assign({midea: midDrs}, client.drs||{});
         var attCell = '<w:tc><w:tcPr><w:tcW w:w="'+W_ATT+'" w:type="dxa"/>'+
           '<w:shd w:val="clear" w:color="auto" w:fill="auto"/>'+
-          '<w:vAlign w:val="center"/></w:tcPr>'+buildAttParas(row.atts)+'</w:tc>';
+          '<w:vAlign w:val="center"/></w:tcPr>'+buildAttParas(row.atts, client.vcos, clientDrsForAtt)+'</w:tc>';
         allSchedRows += tr(dateCell+timeCell+contCell+attCell, MIN_H);
       });
     });
