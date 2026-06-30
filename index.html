@@ -671,31 +671,10 @@ function addClient(){
   var idx = clients.length;
   clients.push({name:'客户'+(idx+1),addr:'',days:[{date:'',wd:'周一',rows:[]}],
     vcos:[],drs:{},bgData:{ov:'',ind:'',ld:'',col:'',histText:''}});
-  // Add tab
-  var bar = document.getElementById('client-tabs-bar');
-  if(bar){
-    var addBtn = bar.querySelector('.client-tab-add');
-    var btn = document.createElement('button');
-    btn.className='client-tab'; btn.id='ctab-'+idx;
-    btn.textContent='客户'+(idx+1);
-    btn.draggable = true;
-    btn.title = '拖拽可调整顺序';
-    btn.setAttribute('ondragstart','onTabDragStart(event,'+idx+')');
-    btn.setAttribute('ondragover','onTabDragOver(event,'+idx+')');
-    btn.setAttribute('ondragleave','onTabDragLeave(event)');
-    btn.setAttribute('ondrop','onTabDrop(event,'+idx+')');
-    btn.setAttribute('ondragend','onTabDragEnd(event)');
-    btn.onclick = (function(i){return function(){activateClient(i);};})(idx);
-    bar.insertBefore(btn, addBtn);
-  }
-  // Add panel
-  var panels = document.getElementById('client-panels');
-  if(panels){
-    var div = document.createElement('div');
-    div.className='client-panel'; div.id='cpanel-'+idx;
-    panels.appendChild(div);
-  }
-  activateClient(idx); dirty();
+  // 重新整体渲染标签栏，确保新客户拥有完整的 wrap+编辑按钮+拖拽事件
+  drawClientTabs();
+  activateClient(idx);
+  dirty();
 }
 
 function removeClient(ci){
@@ -1010,13 +989,43 @@ function confirmPerson(){
   var side=cv==='midea'?'midea':'zte', coId=cv==='midea'?null:cv.replace('zte:','');
   var ctx=_pCtx; var ci=ctx.ci;
   if(ctx.mode==='edit'){
-    if(ctx.side==='midea')midPs[ctx.idx]={name:name,title:title};
-    else{var co=clients[ci].vcos.find(function(c){return c.id===ctx.coId;});if(co)co.persons[ctx.idx]={name:name,title:title};}
+    var oldName='';
+    if(ctx.side==='midea'){
+      oldName = midPs[ctx.idx] ? midPs[ctx.idx].name : '';
+      midPs[ctx.idx]={name:name,title:title};
+      if(midDrs[ctx.idx]) midDrs[ctx.idx]={name:name,title:title};
+    } else {
+      var co=clients[ci].vcos.find(function(c){return c.id===ctx.coId;});
+      if(co){
+        oldName = co.persons[ctx.idx] ? co.persons[ctx.idx].name : '';
+        co.persons[ctx.idx]={name:name,title:title};
+        if(clients[ci].drs[ctx.coId] && clients[ci].drs[ctx.coId][ctx.idx]) clients[ci].drs[ctx.coId][ctx.idx]={name:name,title:title};
+      }
+    }
+    // 同步替换该客户所有行程里的参加人员旧名字
+    if(oldName && oldName!==name){
+      var targetCoId = ctx.side==='midea' ? 'midea' : ctx.coId;
+      clients[ci].days.forEach(function(d){
+        d.rows.forEach(function(r){
+          (r.atts||[]).forEach(function(a){
+            if(a.coId===targetCoId && a.name.replace(/\s+/g,'')===oldName.replace(/\s+/g,'')){
+              a.name = name; a.title = title;
+            }
+          });
+        });
+      });
+    }
   } else {
     if(side==='midea'){midPs.push({name:name,title:title});midDrs.push({name:name,title:title});}
     else{var co2=clients[ci].vcos.find(function(c){return c.id===coId;});if(co2){co2.persons.push({name:name,title:title});if(!clients[ci].drs[coId])clients[ci].drs[coId]=[];clients[ci].drs[coId].push({name:name,title:title});}}
   }
-  closeModal('modal-ap'); drawSidebar(ci); drawExtraArea(ci); dirty();
+  closeModal('modal-ap');
+  drawSidebar(ci); drawExtraArea(ci);
+  // 刷新当前客户的行程面板（如果正在显示）
+  if(document.getElementById('cpanel-'+ci) && document.getElementById('cpanel-'+ci).classList.contains('active')){
+    buildClientPanel(ci);
+  }
+  dirty();
 }
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
@@ -1067,52 +1076,33 @@ function toggleEditSec(ci,idKey){
   _editingSecs[idKey] = !_editingSecs[idKey];
   drawExtraArea(ci);
 }
-var _editingRow = {}; // {idKey_i: true} 记录哪一行正在单行编辑
-function toggleRowEdit(ci,idKey,i){
-  var key = idKey+'_'+i;
-  var wasEditing = !!_editingRow[key];
-  _editingRow = {}; // 一次只允许一行编辑
-  if(!wasEditing) _editingRow[key] = true;
-  drawExtraArea(parseInt(ci));
-}
 function makeDetailSecHTML(ci,side,coId,name,color,rows){
   var idKey = side==='midea'?'midea':coId;
   var n = (rows||[]).length;
   var tbody = (rows||[]).map(function(r,i){
-    var rowKey = idKey+'_'+i;
-    var rowEditing = !!_editingRow[rowKey];
-    var onNm = 'syncDrField(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',\'name\',this.value)';
-    var onTl = 'syncDrField(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',\'title\',this.value)';
     var upBtn = i>0
       ? '<button class="movebtn" onclick="moveRow(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',-1)" title="上移">▲</button>'
       : '<span class="movebtn-ph"></span>';
     var dnBtn = i<n-1
       ? '<button class="movebtn" onclick="moveRow(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',1)" title="下移">▼</button>'
       : '<span class="movebtn-ph"></span>';
-    var editBtn = rowEditing
-      ? '<button class="movebtn" onclick="toggleRowEdit(\''+ci+'\',\''+idKey+'\','+i+')" title="完成" style="color:#1a3a6b">✓</button>'
-      : '<button class="movebtn" onclick="toggleRowEdit(\''+ci+'\',\''+idKey+'\','+i+')" title="编辑此行">✎</button>';
+    // 编辑按钮：打开弹窗（与左侧侧边栏编辑用同一套 openEditPerson 弹窗）
+    var editBtn = '<button class="movebtn" onclick="openEditPerson(\''+side+'\','+ci+',\''+(coId||'')+'\','+i+')" title="编辑此人">✎</button>';
     var delBtn = '<button class="xbtn" onclick="drDel(\''+ci+'\',\''+idKey+'\','+i+')" title="删除">×</button>';
-    if(rowEditing){
-      return '<tr><td><input value="'+escH(r.name)+'" oninput="'+onNm+'"></td>'
-        +'<td><input value="'+escH(r.title||'')+'" oninput="'+onTl+'"></td>'
-        +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+editBtn+delBtn+'</td></tr>';
-    }
-    // 只读模式：纯文本展示，行内含 编辑/上移/下移 按钮
     return '<tr><td style="padding:6px 8px;color:#222">'+escH(r.name)+'</td>'
       +'<td style="padding:6px 8px;color:#555">'+escH(r.title||'')+'</td>'
-      +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+editBtn+'</td></tr>';
+      +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+editBtn+delBtn+'</td></tr>';
   }).join('');
   return '<div class="detail-co-sec">'
     +'<div class="detail-co-sec-hdr" style="background:'+color+'12;color:'+color+'">'
     +'<span style="width:8px;height:8px;border-radius:50%;background:'+color+';display:inline-block;flex-shrink:0"></span>'
     +escH(name)+'（'+n+'人）'
     +'<div style="margin-left:auto;display:flex;gap:6px">'
-    +'<button onclick="drAdd(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#1a3a6b;cursor:pointer;font-family:inherit">＋ 添加</button>'
+    +'<button onclick="openAddPerson(\''+side+'\','+ci+',\''+(coId||'')+'\')" style="background:none;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#1a3a6b;cursor:pointer;font-family:inherit">＋ 添加</button>'
     +'<button onclick="clearPeople(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;font-size:11px;color:#888;cursor:pointer;font-family:inherit">清空</button>'
     +'</div>'
     +'</div>'
-    +'<div style="padding:6px 12px 10px"><table class="pdt"><thead><tr><th>姓名</th><th>职务</th><th style="width:84px">顺序/编辑</th></tr></thead>'
+    +'<div style="padding:6px 12px 10px"><table class="pdt"><thead><tr><th>姓名</th><th>职务</th><th style="width:104px">顺序/编辑</th></tr></thead>'
     +'<tbody>'+tbody+'</tbody></table>'
     +'</div></div>';
 }
@@ -1784,13 +1774,41 @@ buildDocXml = function() {
   // Attendee cell: widowControl, spacing 400, sz=24,szCs=24
   // First line of each group: "公司：名1、名2、名3" (no indent)
   // Continuation lines: firstLineChars=500 firstLine=1200 (= prefix width)
-  function attPara(text, isCont) {
+  function attPara(parts, isCont) {
+    // parts: 数组 [{text, scale}] 或者字符串(向后兼容)
     var ind = isCont ? '<w:ind w:firstLineChars="500" w:firstLine="1200"/>' : '';
+    var runs = '';
+    if (typeof parts === 'string') {
+      runs = run(parts,24,24,false,false,false);
+    } else {
+      parts.forEach(function(p){
+        var scaleTag = p.scale ? '<w:w w:val="'+p.scale+'"/>' : '';
+        runs += '<w:r><w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'"/>'+
+          scaleTag+'<w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'+
+          '<w:t xml:space="preserve">'+escX(p.text)+'</w:t></w:r>';
+      });
+    }
     return '<w:p><w:pPr><w:widowControl/>'+
       '<w:spacing w:line="400" w:lineRule="exact"/>'+ind+
-      '<w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'"/>'+
-      '<w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr>'+
-      run(text,24,24,false,false,false)+'</w:p>';
+      '<w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'"/></w:rPr></w:pPr>'+
+      runs+'</w:p>';
+  }
+  // 把一段「前缀+名1、名2、名3」拆成多个 run，4+字名字单独加缩放
+  function buildAttLineParts(prefix, names) {
+    var parts = [];
+    if (prefix) parts.push({text: prefix, scale: 0});
+    names.forEach(function(nm, i) {
+      if (i > 0) parts.push({text: '、', scale: 0});
+      var charLen = nameCharLen(nm);
+      var nmText = normName(nm);
+      if (charLen >= 4) {
+        var pct = Math.round((3/charLen)*100);
+        parts.push({text: nmText, scale: pct});
+      } else {
+        parts.push({text: nmText, scale: 0});
+      }
+    });
+    return parts;
   }
   // 3字公司名补全角空格
   function padLabel(name) {
@@ -1831,8 +1849,9 @@ buildDocXml = function() {
       var label = padLabel(rawNm)+'：';
       var names = groups[coId];
       for(var i=0;i<names.length;i+=3){
-        var chunk = names.slice(i,i+3).map(function(n){return normName(n);}).join('、');
-        out += attPara((i===0?label:'')+chunk, i>0);
+        var chunkNames = names.slice(i,i+3);
+        var parts = buildAttLineParts(i===0?label:'', chunkNames);
+        out += attPara(parts, i>0);
       }
     });
     return out;
