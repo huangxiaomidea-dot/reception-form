@@ -95,6 +95,9 @@ textarea.inp{resize:vertical;min-height:88px;line-height:1.6}
 .pdt th{background:#edf1fa;color:#1a3a6b;padding:5px 8px;font-size:11px;font-weight:700;border:1px solid #d5ddf0;text-align:left}
 .pdt td{padding:4px 6px;border:1px solid #e4e8f2}
 .pdt input{width:100%;border:none;background:transparent;font-family:inherit;font-size:13px;outline:none;color:#222}
+.movebtn{background:none;border:none;cursor:pointer;color:#666;font-size:12px;padding:1px 3px;line-height:1}
+.movebtn:hover{color:#1a3a6b}
+.movebtn-ph{display:inline-block;width:16px}
 .arb{margin-top:5px;padding:4px 10px;border:1px dashed #bbc;border-radius:4px;background:transparent;color:#778;font-size:11px;cursor:pointer;font-family:inherit}
 .arb:hover{border-color:#1a3a6b;color:#1a3a6b;background:#f0f4ff}
 .hr{display:grid;grid-template-columns:130px 1fr auto;gap:6px;align-items:start;padding:7px 8px;background:#fafbff;border-radius:5px;border:1px solid #eee;margin-bottom:5px}
@@ -1041,6 +1044,7 @@ function toggleEditSec(ci,idKey){
 function makeDetailSecHTML(ci,side,coId,name,color,rows){
   var idKey = side==='midea'?'midea':coId;
   var editing = !!_editingSecs[idKey];
+  var n = (rows||[]).length;
   var tbody = (rows||[]).map(function(r,i){
     var onNm = side==='midea'
       ? 'midDrs['+i+'].name=this.value;dirty()'
@@ -1048,15 +1052,21 @@ function makeDetailSecHTML(ci,side,coId,name,color,rows){
     var onTl = side==='midea'
       ? 'midDrs['+i+'].title=this.value;dirty()'
       : 'clients['+ci+'].drs[\''+coId+'\']['+i+'].title=this.value;dirty()';
+    var upBtn = i>0
+      ? '<button class="movebtn" onclick="moveRow(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',-1)" title="上移">▲</button>'
+      : '<span class="movebtn-ph"></span>';
+    var dnBtn = i<n-1
+      ? '<button class="movebtn" onclick="moveRow(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',1)" title="下移">▼</button>'
+      : '<span class="movebtn-ph"></span>';
     if(editing){
       return '<tr><td><input value="'+escH(r.name)+'" oninput="'+onNm+'"></td>'
         +'<td><input value="'+escH(r.title||'')+'" oninput="'+onTl+'"></td>'
-        +'<td><button class="xbtn" onclick="drDel(\''+ci+'\',\''+idKey+'\','+i+')">×</button></td></tr>';
+        +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+'<button class="xbtn" onclick="drDel(\''+ci+'\',\''+idKey+'\','+i+')">×</button></td></tr>';
     }
-    // 只读模式：纯文本展示
+    // 只读模式：纯文本展示，仍可调整顺序
     return '<tr><td style="padding:6px 8px;color:#222">'+escH(r.name)+'</td>'
       +'<td style="padding:6px 8px;color:#555">'+escH(r.title||'')+'</td>'
-      +'<td></td></tr>';
+      +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+'</td></tr>';
   }).join('');
   var editBtnHtml = editing
     ? '<button onclick="toggleEditSec(\''+ci+'\',\''+idKey+'\')" style="background:#1a3a6b;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#fff;cursor:pointer;font-family:inherit">✓ 完成</button>'
@@ -1064,16 +1074,37 @@ function makeDetailSecHTML(ci,side,coId,name,color,rows){
   return '<div class="detail-co-sec">'
     +'<div class="detail-co-sec-hdr" style="background:'+color+'12;color:'+color+'">'
     +'<span style="width:8px;height:8px;border-radius:50%;background:'+color+';display:inline-block;flex-shrink:0"></span>'
-    +escH(name)+'（'+(rows||[]).length+'人）'
+    +escH(name)+'（'+n+'人）'
     +'<div style="margin-left:auto;display:flex;gap:6px">'
     +editBtnHtml
     +(editing?'<button onclick="clearPeople(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;font-size:11px;color:#888;cursor:pointer;font-family:inherit">清空</button>':'')
     +'</div>'
     +'</div>'
-    +'<div style="padding:6px 12px 10px"><table class="pdt"><thead><tr><th>姓名</th><th>职务</th><th style="width:30px"></th></tr></thead>'
+    +'<div style="padding:6px 12px 10px"><table class="pdt"><thead><tr><th>姓名</th><th>职务</th><th style="width:58px">顺序</th></tr></thead>'
     +'<tbody>'+tbody+'</tbody></table>'
     +(editing?'<button class="arb" onclick="drAdd(\''+ci+'\',\''+idKey+'\')">＋ 添加行</button>':'')
     +'</div></div>';
+}
+
+// ===== 人员顺序上下调整 =====
+function moveRow(ci, side, coId, i, dir){
+  ci = parseInt(ci);
+  var j = i + dir;
+  function swap(arr){
+    if(j<0||j>=arr.length) return false;
+    var tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp;
+    return true;
+  }
+  if(side==='midea'){
+    if(!swap(midPs)) return;
+    swap(midDrs);
+  } else {
+    var co = clients[ci].vcos.find(function(c){return c.id===coId;});
+    if(!co) return;
+    if(!swap(co.persons)) return;
+    if(clients[ci].drs[coId]) swap(clients[ci].drs[coId]);
+  }
+  drawSidebar(ci); drawExtraArea(ci); dirty();
 }
 function drDel(ci,key,i){
   if(key==='midea')midDrs.splice(i,1);
