@@ -546,6 +546,12 @@ function boot(st){
     var bg = c.bgData ? JSON.parse(JSON.stringify(c.bgData)) : {ov:'',ind:'',ld:'',col:'',histText:''};
     return {name:c.name, addr:c.addr||'', days:days, vcos:vcos, drs:drs, bgData:bg};
   });
+  // 初始加载后，按各客户人员名单顺序重排所有议程参会人标签
+  clients.forEach(function(c, ci){
+    c.days.forEach(function(d){ d.rows.forEach(function(r){
+      if(r.atts && r.atts.length) r.atts = sortAttsByOrder(r.atts, ci);
+    }); });
+  });
   // fill form fields
   var fmap = {dateRange:'f-date-range',wd:'f-wd',ts:'f-ts',te:'f-te',tp:'f-tp',pur:'f-pur',dr:'f-dr'};
   Object.keys(fmap).forEach(function(k){var el=document.getElementById(fmap[k]);if(el&&st[k]!=null)el.value=st[k];});
@@ -822,6 +828,8 @@ function toggleAtt(coId,name,title){
   if(!row.atts)row.atts=[];
   var i=row.atts.findIndex(function(a){return a.coId===coId&&a.name===name;});
   if(i>=0)row.atts.splice(i,1); else row.atts.push({name:name,coId:coId,title:title});
+  // 选完后立即按人员名单顺序重排（数据层持久化排序，预览与导出一致）
+  row.atts = sortAttsByOrder(row.atts, pickCell.ci);
   drawAtts(pickCell.ci,pickCell.di,pickCell.ri); drawSidebar(pickCell.ci); dirty();
 }
 function rmAtt(ci,di,ri,ai){var row=getRow(ci,di,ri);if(row&&row.atts)row.atts.splice(ai,1);drawAtts(ci,di,ri);dirty();}
@@ -1107,6 +1115,40 @@ function makeDetailSecHTML(ci,side,coId,name,color,rows){
     +'</div></div>';
 }
 
+// ===== 按人员名单顺序排列参会人标签（网页预览与Word导出保持一致）=====
+function sortAttsByOrder(atts, ci){
+  if(!atts||!atts.length) return atts;
+  var cl = clients[ci]; if(!cl) return atts;
+  function normN(n){return(n||'').replace(/\s+/g,'');}
+  var groups={}, order=[];
+  atts.forEach(function(a){
+    if(!groups[a.coId]){groups[a.coId]=[]; order.push(a.coId);}
+    groups[a.coId].push(a);
+  });
+  // 按 vcos 顺序排公司分组，美的放最后
+  var coOrder=[];
+  (cl.vcos||[]).forEach(function(v){ if(groups[v.id]) coOrder.push(v.id); });
+  if(groups['midea']) coOrder.push('midea');
+  // 补充未在vcos中找到的（理论不应发生）
+  order.forEach(function(id){ if(coOrder.indexOf(id)===-1) coOrder.push(id); });
+
+  var result=[];
+  coOrder.forEach(function(coId){
+    var drList = coId==='midea' ? midDrs : (cl.drs[coId]||[]);
+    var items = groups[coId];
+    if(drList && drList.length){
+      var sorted = drList
+        .filter(function(r){ return items.some(function(a){ return normN(a.name)===normN(r.name); }); })
+        .map(function(r){ return items.find(function(a){ return normN(a.name)===normN(r.name); }); });
+      var extra = items.filter(function(a){ return !sorted.some(function(s){ return normN(s.name)===normN(a.name); }); });
+      result = result.concat(sorted, extra);
+    } else {
+      result = result.concat(items);
+    }
+  });
+  return result;
+}
+
 // ===== 同步 drs ↔ vco.persons / midPs（双向数据一致）=====
 function syncDrField(ci, side, coId, idx, field, val){
   ci = parseInt(ci);
@@ -1133,13 +1175,28 @@ function moveRow(ci, side, coId, i, dir){
   if(side==='midea'){
     if(!swap(midPs)) return;
     swap(midDrs);
+    // 美的人员顺序是全局共享的，重新排序所有客户的议程参会人标签
+    clients.forEach(function(c, cidx){
+      c.days.forEach(function(d){ d.rows.forEach(function(r){
+        if(r.atts && r.atts.some(function(a){return a.coId==='midea';})) r.atts = sortAttsByOrder(r.atts, cidx);
+      }); });
+    });
   } else {
     var co = clients[ci].vcos.find(function(c){return c.id===coId;});
     if(!co) return;
     if(!swap(co.persons)) return;
     if(clients[ci].drs[coId]) swap(clients[ci].drs[coId]);
+    // 重新排序该客户所有议程的参会人标签
+    clients[ci].days.forEach(function(d){ d.rows.forEach(function(r){
+      if(r.atts && r.atts.some(function(a){return a.coId===coId;})) r.atts = sortAttsByOrder(r.atts, ci);
+    }); });
   }
-  drawSidebar(ci); drawExtraArea(ci); dirty();
+  drawSidebar(ci); drawExtraArea(ci);
+  // 刷新当前客户的行程面板显示
+  if(document.getElementById('cpanel-'+ci) && document.getElementById('cpanel-'+ci).classList.contains('active')){
+    buildClientPanel(ci);
+  }
+  dirty();
 }
 function drDel(ci,key,i){
   ci = parseInt(ci);
