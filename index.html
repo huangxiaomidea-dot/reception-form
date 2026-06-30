@@ -1033,8 +1033,14 @@ function drawExtraArea(ci){
   updateAiSel();
 }
 
+var _editingSecs = {}; // {idKey: true} 记录哪些分组处于编辑模式
+function toggleEditSec(ci,idKey){
+  _editingSecs[idKey] = !_editingSecs[idKey];
+  drawExtraArea(ci);
+}
 function makeDetailSecHTML(ci,side,coId,name,color,rows){
   var idKey = side==='midea'?'midea':coId;
+  var editing = !!_editingSecs[idKey];
   var tbody = (rows||[]).map(function(r,i){
     var onNm = side==='midea'
       ? 'midDrs['+i+'].name=this.value;dirty()'
@@ -1042,19 +1048,32 @@ function makeDetailSecHTML(ci,side,coId,name,color,rows){
     var onTl = side==='midea'
       ? 'midDrs['+i+'].title=this.value;dirty()'
       : 'clients['+ci+'].drs[\''+coId+'\']['+i+'].title=this.value;dirty()';
-    return '<tr><td><input value="'+escH(r.name)+'" oninput="'+onNm+'"></td>'
-      +'<td><input value="'+escH(r.title||'')+'" oninput="'+onTl+'"></td>'
-      +'<td><button class="xbtn" onclick="drDel(\''+ci+'\',\''+idKey+'\','+i+')">×</button></td></tr>';
+    if(editing){
+      return '<tr><td><input value="'+escH(r.name)+'" oninput="'+onNm+'"></td>'
+        +'<td><input value="'+escH(r.title||'')+'" oninput="'+onTl+'"></td>'
+        +'<td><button class="xbtn" onclick="drDel(\''+ci+'\',\''+idKey+'\','+i+')">×</button></td></tr>';
+    }
+    // 只读模式：纯文本展示
+    return '<tr><td style="padding:6px 8px;color:#222">'+escH(r.name)+'</td>'
+      +'<td style="padding:6px 8px;color:#555">'+escH(r.title||'')+'</td>'
+      +'<td></td></tr>';
   }).join('');
+  var editBtnHtml = editing
+    ? '<button onclick="toggleEditSec(\''+ci+'\',\''+idKey+'\')" style="background:#1a3a6b;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#fff;cursor:pointer;font-family:inherit">✓ 完成</button>'
+    : '<button onclick="toggleEditSec(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#1a3a6b;cursor:pointer;font-family:inherit">✎ 编辑</button>';
   return '<div class="detail-co-sec">'
     +'<div class="detail-co-sec-hdr" style="background:'+color+'12;color:'+color+'">'
     +'<span style="width:8px;height:8px;border-radius:50%;background:'+color+';display:inline-block;flex-shrink:0"></span>'
     +escH(name)+'（'+(rows||[]).length+'人）'
-    +'<button onclick="clearPeople(\''+ci+'\',\''+idKey+'\')" style="margin-left:auto;background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;font-size:11px;color:#888;cursor:pointer;font-family:inherit">清空</button>'
+    +'<div style="margin-left:auto;display:flex;gap:6px">'
+    +editBtnHtml
+    +(editing?'<button onclick="clearPeople(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;font-size:11px;color:#888;cursor:pointer;font-family:inherit">清空</button>':'')
+    +'</div>'
     +'</div>'
     +'<div style="padding:6px 12px 10px"><table class="pdt"><thead><tr><th>姓名</th><th>职务</th><th style="width:30px"></th></tr></thead>'
     +'<tbody>'+tbody+'</tbody></table>'
-    +'<button class="arb" onclick="drAdd(\''+ci+'\',\''+idKey+'\')">＋ 添加行</button></div></div>';
+    +(editing?'<button class="arb" onclick="drAdd(\''+ci+'\',\''+idKey+'\')">＋ 添加行</button>':'')
+    +'</div></div>';
 }
 function drDel(ci,key,i){
   if(key==='midea')midDrs.splice(i,1);
@@ -1080,22 +1099,142 @@ function clearPeople(ci,key){
 }
 
 // ===== AI RECOGNIZE =====
-function aiRecognize(){
-  var text=document.getElementById('ai-input').value.trim(); if(!text){alert('请先粘贴人员信息');return;}
-  var target=document.getElementById('m-co-ai').value; var ci=_activeClient; var added=0;
+// ===== 智能批量识别（本地解析 + AI兜底，自动识别姓名/职务顺序）=====
+function isCnName(s){ return /^[一-龥·]{2,4}$/.test((s||'').replace(/\s/g,'')); }
+function padTwoCharName(name){
+  var clean=name.replace(/\s/g,'');
+  if(clean.length===2) return clean[0]+'  '+clean[1];
+  return name;
+}
+function parseOneLine(line){
+  line=line.trim(); if(!line) return null;
+  if(line.indexOf('\t')!==-1){
+    var tp=line.split('\t').map(function(s){return s.trim();});
+    if(isCnName(tp[0])) return {name:tp[0], title:tp.slice(1).join('')};
+    if(isCnName(tp[tp.length-1])) return {name:tp[tp.length-1], title:tp.slice(0,-1).join('')};
+    return {name:tp[0], title:tp.slice(1).join(' ')};
+  }
+  var tokens=line.split(/\s+/).filter(Boolean);
+  if(tokens.length===1) return {name:line, title:''};
+  var first=tokens[0], last=tokens[tokens.length-1];
+  var firstIsName=isCnName(first), lastIsName=isCnName(last);
+  if(lastIsName && !firstIsName) return {name:last, title:tokens.slice(0,-1).join('')};
+  if(firstIsName && !lastIsName) return {name:first, title:tokens.slice(1).join('')};
+  if(lastIsName) return {name:last, title:tokens.slice(0,-1).join('')};
+  return {name:first, title:tokens.slice(1).join(' ')};
+}
+function parsePersonTextLocal(text){
+  var results=[];
   text.split(/[\r\n]+/).forEach(function(line){
-    line=line.trim();if(!line)return;
-    var name='',title='';
-    if(line.indexOf('\t')!==-1){var pts=line.split('\t');name=pts[0].trim();title=pts.slice(1).join(' ').trim();}
-    else{var sp=line.search(/\s+/);if(sp>0){name=line.substring(0,sp).trim();title=line.substring(sp).trim();}else name=line;}
-    if(!name)return;
-    if(target==='midea'){midPs.push({name:name,title:title});midDrs.push({name:name,title:title});}
-    else{var co=clients[ci].vcos.find(function(c){return c.id===target;});
-      if(co){co.persons.push({name:name,title:title});if(!clients[ci].drs[target])clients[ci].drs[target]=[];clients[ci].drs[target].push({name:name,title:title});}}
-    added++;
+    var p=parseOneLine(line);
+    if(p && p.name) results.push({name:padTwoCharName(p.name), title:p.title});
   });
-  document.getElementById('ai-input').value='';
-  drawSidebar(ci); drawExtraArea(ci); dirty(); if(added)alert('已添加 '+added+' 人');
+  return results;
+}
+function parseAiPersonJson(text){
+  var results=[];
+  try{
+    var m=text.match(/\[[\s\S]*\]/); if(!m) return results;
+    var arr=JSON.parse(m[0]); if(!Array.isArray(arr)) return results;
+    arr.forEach(function(item){
+      var name=(item.name||item.姓名||'').trim();
+      var title=(item.title||item.职务||'').trim();
+      if(name) results.push({name:padTwoCharName(name), title:title});
+    });
+  }catch(e){}
+  return results;
+}
+async function aiRecognize(){
+  var text=document.getElementById('ai-input').value.trim();
+  if(!text){alert('请先粘贴人员信息文本');return;}
+  var target=document.getElementById('m-co-ai').value; var ci=_activeClient;
+  var btn=document.querySelector('[onclick="aiRecognize()"]');
+  var origText=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='识别中…';}
+
+  var localParsed=parsePersonTextLocal(text);
+  var lineCount=text.split(/[\r\n]+/).filter(function(l){return l.trim();}).length;
+
+  try{
+    var prompt='以下文本共'+lineCount+'行，每行一人，请识别每行的姓名和职务。\n'
+      +'规则：姓名是2-4个汉字；职务是描述岗位的词（含公司名），姓名可能在行首也可能在行尾。\n'
+      +'必须输出'+lineCount+'个对象，不能遗漏任何一行。\n'
+      +'只输出JSON数组，格式：[{"name":"姓名","title":"职务"},...]\n'
+      +'不要输出任何解释或其他内容。\n\n文本：\n'+text;
+
+    var resp=await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer 3185da2847c14aa7b520b1754ad90c2d.6dJUHgXDnLpxoPTL'},
+      body:JSON.stringify({
+        model:'glm-4-flash',
+        messages:[
+          {role:'system',content:'你是数据提取助手，只输出JSON数组，不输出任何解释。'},
+          {role:'user',content:prompt}
+        ],
+        max_tokens:2000,
+        temperature:0.0
+      })
+    });
+
+    var aiParsed=[];
+    if(resp.ok){
+      var data=await resp.json();
+      var aiText=(data.choices&&data.choices[0]&&data.choices[0].message)?data.choices[0].message.content:'';
+      aiParsed=parseAiPersonJson(aiText);
+    }
+    // 取本地与AI结果中数量更多的那个
+    var parsed=(aiParsed.length>=localParsed.length && aiParsed.length>0) ? aiParsed : localParsed;
+    if(!parsed.length){alert('未识别到人员信息，请检查格式');return;}
+
+    var added=0;
+    parsed.forEach(function(p){
+      if(target==='midea'){
+        if(!midPs.some(function(e){return e.name.replace(/\s/g,'')===p.name.replace(/\s/g,'');})){
+          midPs.push({name:p.name,title:p.title}); midDrs.push({name:p.name,title:p.title}); added++;
+        }
+      } else {
+        var co=clients[ci].vcos.find(function(c){return c.id===target;});
+        if(co){
+          if(!co.persons.some(function(e){return e.name.replace(/\s/g,'')===p.name.replace(/\s/g,'');})){
+            co.persons.push({name:p.name,title:p.title});
+            if(!clients[ci].drs[target])clients[ci].drs[target]=[];
+            clients[ci].drs[target].push({name:p.name,title:p.title});
+            added++;
+          }
+        }
+      }
+    });
+    document.getElementById('ai-input').value='';
+    drawSidebar(ci); drawExtraArea(ci); dirty();
+    alert('识别完成，新增 '+added+' 人'+(parsed.length>added?'（'+(parsed.length-added)+'人重复已跳过）':''));
+  }catch(err){
+    // AI失败时仍使用本地解析结果
+    if(localParsed.length){
+      var added2=0;
+      localParsed.forEach(function(p){
+        if(target==='midea'){
+          if(!midPs.some(function(e){return e.name.replace(/\s/g,'')===p.name.replace(/\s/g,'');})){
+            midPs.push({name:p.name,title:p.title}); midDrs.push({name:p.name,title:p.title}); added2++;
+          }
+        } else {
+          var co=clients[ci].vcos.find(function(c){return c.id===target;});
+          if(co && !co.persons.some(function(e){return e.name.replace(/\s/g,'')===p.name.replace(/\s/g,'');})){
+            co.persons.push({name:p.name,title:p.title});
+            if(!clients[ci].drs[target])clients[ci].drs[target]=[];
+            clients[ci].drs[target].push({name:p.name,title:p.title});
+            added2++;
+          }
+        }
+      });
+      document.getElementById('ai-input').value='';
+      drawSidebar(ci); drawExtraArea(ci); dirty();
+      alert('AI识别失败，已用本地解析新增 '+added2+' 人');
+    } else {
+      alert('识别失败：'+err.message);
+    }
+  } finally {
+    if(btn){btn.disabled=false;btn.textContent=origText||'识别添加';}
+  }
 }
 
 // ===== AI BACKGROUND =====
