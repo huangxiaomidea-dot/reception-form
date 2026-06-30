@@ -1067,11 +1067,20 @@ function toggleEditSec(ci,idKey){
   _editingSecs[idKey] = !_editingSecs[idKey];
   drawExtraArea(ci);
 }
+var _editingRow = {}; // {idKey_i: true} 记录哪一行正在单行编辑
+function toggleRowEdit(ci,idKey,i){
+  var key = idKey+'_'+i;
+  var wasEditing = !!_editingRow[key];
+  _editingRow = {}; // 一次只允许一行编辑
+  if(!wasEditing) _editingRow[key] = true;
+  drawExtraArea(parseInt(ci));
+}
 function makeDetailSecHTML(ci,side,coId,name,color,rows){
   var idKey = side==='midea'?'midea':coId;
-  var editing = !!_editingSecs[idKey];
   var n = (rows||[]).length;
   var tbody = (rows||[]).map(function(r,i){
+    var rowKey = idKey+'_'+i;
+    var rowEditing = !!_editingRow[rowKey];
     var onNm = 'syncDrField(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',\'name\',this.value)';
     var onTl = 'syncDrField(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',\'title\',this.value)';
     var upBtn = i>0
@@ -1080,31 +1089,31 @@ function makeDetailSecHTML(ci,side,coId,name,color,rows){
     var dnBtn = i<n-1
       ? '<button class="movebtn" onclick="moveRow(\''+ci+'\',\''+side+'\',\''+(coId||'')+'\','+i+',1)" title="下移">▼</button>'
       : '<span class="movebtn-ph"></span>';
-    if(editing){
+    var editBtn = rowEditing
+      ? '<button class="movebtn" onclick="toggleRowEdit(\''+ci+'\',\''+idKey+'\','+i+')" title="完成" style="color:#1a3a6b">✓</button>'
+      : '<button class="movebtn" onclick="toggleRowEdit(\''+ci+'\',\''+idKey+'\','+i+')" title="编辑此行">✎</button>';
+    var delBtn = '<button class="xbtn" onclick="drDel(\''+ci+'\',\''+idKey+'\','+i+')" title="删除">×</button>';
+    if(rowEditing){
       return '<tr><td><input value="'+escH(r.name)+'" oninput="'+onNm+'"></td>'
         +'<td><input value="'+escH(r.title||'')+'" oninput="'+onTl+'"></td>'
-        +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+'<button class="xbtn" onclick="drDel(\''+ci+'\',\''+idKey+'\','+i+')">×</button></td></tr>';
+        +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+editBtn+delBtn+'</td></tr>';
     }
-    // 只读模式：纯文本展示，仍可调整顺序
+    // 只读模式：纯文本展示，行内含 编辑/上移/下移 按钮
     return '<tr><td style="padding:6px 8px;color:#222">'+escH(r.name)+'</td>'
       +'<td style="padding:6px 8px;color:#555">'+escH(r.title||'')+'</td>'
-      +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+'</td></tr>';
+      +'<td style="white-space:nowrap;text-align:center">'+upBtn+dnBtn+editBtn+'</td></tr>';
   }).join('');
-  var editBtnHtml = editing
-    ? '<button onclick="toggleEditSec(\''+ci+'\',\''+idKey+'\')" style="background:#1a3a6b;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#fff;cursor:pointer;font-family:inherit">✓ 完成</button>'
-    : '<button onclick="toggleEditSec(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#1a3a6b;cursor:pointer;font-family:inherit">✎ 编辑</button>';
   return '<div class="detail-co-sec">'
     +'<div class="detail-co-sec-hdr" style="background:'+color+'12;color:'+color+'">'
     +'<span style="width:8px;height:8px;border-radius:50%;background:'+color+';display:inline-block;flex-shrink:0"></span>'
     +escH(name)+'（'+n+'人）'
     +'<div style="margin-left:auto;display:flex;gap:6px">'
-    +editBtnHtml
-    +(editing?'<button onclick="clearPeople(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;font-size:11px;color:#888;cursor:pointer;font-family:inherit">清空</button>':'')
+    +'<button onclick="drAdd(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #1a3a6b;border-radius:4px;padding:2px 10px;font-size:11px;color:#1a3a6b;cursor:pointer;font-family:inherit">＋ 添加</button>'
+    +'<button onclick="clearPeople(\''+ci+'\',\''+idKey+'\')" style="background:none;border:1px solid #ddd;border-radius:4px;padding:2px 8px;font-size:11px;color:#888;cursor:pointer;font-family:inherit">清空</button>'
     +'</div>'
     +'</div>'
-    +'<div style="padding:6px 12px 10px"><table class="pdt"><thead><tr><th>姓名</th><th>职务</th><th style="width:58px">顺序</th></tr></thead>'
+    +'<div style="padding:6px 12px 10px"><table class="pdt"><thead><tr><th>姓名</th><th>职务</th><th style="width:84px">顺序/编辑</th></tr></thead>'
     +'<tbody>'+tbody+'</tbody></table>'
-    +(editing?'<button class="arb" onclick="drAdd(\''+ci+'\',\''+idKey+'\')">＋ 添加行</button>':'')
     +'</div></div>';
 }
 
@@ -1939,19 +1948,18 @@ buildDocXml = function() {
     // widowControl, spacing 400, kern=0, sz=24
     var charLen = nameCharLen(nm);
     var nmText = normName(nm);
-    // 4字及以上姓名：用负字符间距压缩到约3字宽度
-    var nameSpacing = '';
+    // 4字及以上姓名：用字符缩放（w:w 百分比）按比例压缩到3字宽度
+    // 缩放比例 = 3 / 实际字数，例如4字→75%，5字→60%，6字→50%
+    var nameScale = '';
     if(charLen>=4){
-      // 3字标准宽度=660twips(24half-pt*220/8≈), 简化：每多1字压缩约-40~-50 twips
-      // 经验值：4字名压缩量约-30, 5字约-50
-      var compress = -(Math.round((charLen-3)*40));
-      nameSpacing = '<w:spacing w:val="'+compress+'"/>';
+      var pct = Math.round((3/charLen)*100);
+      nameScale = '<w:w w:val="'+pct+'"/>';
     }
     return '<w:p><w:pPr><w:spacing w:line="400" w:lineRule="exact"/>'+
       '<w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'"/>'+
       '<w:kern w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:pPr>'+
       '<w:r><w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'" w:hint="eastAsia"/>'+
-      '<w:kern w:val="0"/>'+nameSpacing+'<w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'+
+      '<w:kern w:val="0"/>'+nameScale+'<w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'+
       '<w:t xml:space="preserve">'+escX(nmText)+'</w:t></w:r>'+
       (tl?'<w:r><w:rPr><w:rFonts w:ascii="'+F+'" w:eastAsia="'+F+'" w:hAnsi="'+F+'" w:hint="eastAsia"/>'+
       '<w:kern w:val="0"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr>'+
